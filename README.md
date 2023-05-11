@@ -1,7 +1,4 @@
-# AMNet: Memorability Estimation with Attention
-A PyTorch implementation of our paper [AMNet: Memorability Estimation with Attention](https://arxiv.org/abs/1804.03115)
-by Jiri Fajtl, Vasileios Argyriou, Dorothy Monekosso and Paolo Remagnino. This paper will be presented 
-at [CVPR 2018](http://cvpr2018.thecvf.com/).
+Fork of [AMNet: Memorability Estimation with Attention](https://arxiv.org/abs/1804.03115)
  
 
 ## Installation
@@ -21,12 +18,6 @@ The development and evaluation was done on the following configuration:
 - NumPy:  1.14.2
 - OpenCV:  3.2.0
 - PIL:  1.1.7
-
-There are no explicit version requirements for any of the components and the AMNet is expected to run with other configurations too,
-however, it is important to note that results obtained with different setup may slightly differ from our publication. We found that 
-with PyTorch version 0.3.0.post4 the average Spearman's rank correlation over the five LaMem splits was RC=0.67641 while with the 
-version 0.2.0_2  RC=0.67666 (published).
-
 
 ## Datasets
 The AMNet was evaluated on two datasests, [LaMem](http://memorability.csail.mit.edu/download.html) and 
@@ -122,15 +113,14 @@ python3 main.py --help
 or see [main.py](main.py). If you want to experiment with other parameters the best place to go is [config.py](config.py).
 
 
-## Cite
-If you use this code or reference our paper in your work please cite this publication.
+## Additional info:
+Train code used for lgcn:
 ```
-@inproceedings{fajtl2018amnet,
-  title={AMNet: Memorability Estimation with Attention},
-  author={Fajtl, Jiri and Argyriou, Vasileios and Monekosso, Dorothy and Remagnino, Paolo},
-  booktitle={Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition},
-  pages={6363--6372},
-  year={2018}
-}
+python main.py --train-batch-size 8 --cnn ResNet50FC --dataset sun --train-split train_1 --experiment lgcn_4 --epoch-max 50
+```
+
+test code:
+```
+python main.py --test --dataset sun --cnn ResNet50FC --test-split 'test_1*' --model-weights data/lgcn_4_train_1/weights_14.pkl  
 ```
 
