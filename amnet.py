@@ -548,6 +548,7 @@ class AMNet:
         )
 
         self.total_time = time.time()
+        best_val_rc = 0
         for epoch in range(
             self.hps.epoch_start + 1, self.hps.epoch_start + self.hps.epoch_max
         ):
@@ -556,13 +557,12 @@ class AMNet:
                 "--------------------------------------------------------------------------------------"
             )
             self.train_epoch(epoch, train_data_loader)
-            self.save_checkpoint(
-                os.path.join(
-                    self.get_experiment_path(), "weights_" + str(epoch) + ".pkl"
-                )
-            )
 
             rc, mse, test_loss = self.eval_model(test_data_loader)
+            if rc > best_val_rc:
+                best_val_rc = rc
+                #self.save_checkpoint(os.path.join(self.get_experiment_path(), "weights_" + str(epoch) + ".pkl"))
+                self.save_checkpoint(os.path.join(self.get_experiment_path(), "weights" + ".pkl"))
             self.logger.write(
                 train=False,
                 epoch=epoch,
