@@ -1,4 +1,14 @@
 data
 datasets/SUN_memorability
+datasets/figrim
 __*
 .vscode
+lightning_logs
+base_model*
+det*
+input.jpg
+model*
+*.csv
+results.txt
+test*
+UI.py

@@ -180,6 +180,34 @@ def get_amnet_config(args):
         hps.img_std = [0.229, 0.224, 0.225]
 
 
+    elif hps.dataset_name == 'figrim':
+        # SUN memorability dataset
+
+        if hps.val_split == '':
+            if hps.train_split != '':
+                hps.val_split = 'test_' + hps.train_split.split('_')[1]
+
+        if hps.dataset_root == '':
+            hps.dataset_root = 'datasets/figrim/'
+
+        if hps.epoch_max < 0:
+            hps.epoch_max = 50
+
+        if hps.train_batch_size < 0:
+            hps.train_batch_size = 222
+
+        if hps.test_batch_size < 0:
+            hps.test_batch_size = 370
+
+        hps.l2_req = 0.0001
+
+        # TODO: Should be updated for the SUN dataset!
+        hps.target_mean = 0.754
+        hps.target_scale = 2.0
+        hps.img_mean = [0.485, 0.456, 0.406]
+        hps.img_std = [0.229, 0.224, 0.225]
+
+
 
     elif hps.dataset_name == 'ava':
         # AVA image aesthetic dataset

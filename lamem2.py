@@ -1,9 +1,9 @@
-__author__ = 'Jiri Fajtl'
-__email__ = 'ok1zjf@gmail.com'
-__version__= '1.1'
+__author__ = "Jiri Fajtl"
+__email__ = "ok1zjf@gmail.com"
+__version__ = "1.1"
 __status__ = "Research"
 __date__ = "2/1/2018"
-__license__= "MIT License"
+__license__ = "MIT License"
 
 import torch.utils.data as data
 from PIL import Image
@@ -15,10 +15,18 @@ import operator
 from scipy import stats
 
 
-img_extensions = ['.jpg', '.png', '.jpeg']
-class LaMem2(data.Dataset):
+img_extensions = [".jpg", ".png", ".jpeg"]
 
-    def __init__(self, img_root='', split_root='', split='train_1', transform=None, target_transform=None):
+
+class LaMem2(data.Dataset):
+    def __init__(
+        self,
+        img_root="",
+        split_root="",
+        split="train_1",
+        transform=None,
+        target_transform=None,
+    ):
         self.img_root = os.path.expanduser(img_root)
         self.transform = transform
         self.target_transform = target_transform
@@ -29,17 +37,19 @@ class LaMem2(data.Dataset):
         self.split_file = os.path.join(split_root, split)
         if not os.path.isdir(self.split_file):
             fname, ext = os.path.splitext(self.split_file)
-            if ext == '':
-                self.split_file += '.txt'
+            if ext == "":
+                self.split_file += ".txt"
 
         self.data = []
         self.labels = []
+
+        self.alpha_maps = []
 
         if os.path.isdir(self.split_file):
             # Load imaegs from given directory
             image_names = sorted(os.listdir(self.split_file))
             # print(image_names)
-            print("Loaded",len(image_names),'images from directory',self.split_file)
+            print("Loaded", len(image_names), "images from directory", self.split_file)
 
             images = []
             for img_name in image_names:
@@ -55,21 +65,29 @@ class LaMem2(data.Dataset):
                     # Set default ground truth memorabiltiy. This Could be extracted form the image filename
                     self.labels.append(float(gt_label))
 
-
-
         else:
             # Load images according to a split file
-            with open(self.split_file, 'rt') as f:
+            with open(self.split_file, "rt") as f:
                 for line in f:
-                    parts = line.strip().split(' ')
+                    parts = line.strip().split(" ")
                     img_filename = parts[0].strip()
+
+                    file, ext = os.path.splitext(img_filename)
+                    alpha_paths = os.path.join(
+                        self.img_root.split("images")[0], "alpha_maps", img_filename
+                    )
+
                     full_img_path = os.path.join(self.img_root, img_filename)
                     if os.path.isfile(full_img_path):
                         self.data.append(full_img_path)
                         self.labels.append(float(parts[1].strip()))
                         self.valid_labels = True
+                        # if os.path.isfile(alpha_paths):
+                        self.alpha_maps.append(alpha_paths)
+                        # else:
+                        #     print(f"Missing files: \n\n\n\n{alpha_paths}\n\n\n\n")
                     else:
-                        print ("WARNING image ", full_img_path," doesn't exist")
+                        print("WARNING image ", full_img_path, " doesn't exist")
 
         return
 
@@ -82,14 +100,13 @@ class LaMem2(data.Dataset):
                 return img
 
         # open path as file to avoid ResourceWarning (https://github.com/python-pillow/Pillow/issues/835)
-        with open(path, 'rb') as f:
+        with open(path, "rb") as f:
             with Image.open(f) as img:
-                img_out = img.convert('RGB')
+                img_out = img.convert("RGB")
                 if self.image_cache is not None:
                     self.image_cache.cache_image(path, img_out)
 
                 return img_out
-
 
     def preload_images(self):
         # Preload images
@@ -97,30 +114,38 @@ class LaMem2(data.Dataset):
             for path in self.data:
                 self.img_loader(path)
 
-
     def __getitem__(self, index):
         sample = self.img_loader(self.data[index])
         target = self.labels[index]
 
+        try:
+            alpha = self.img_loader(self.alpha_maps[index])
+        except:
+            print(
+                f"\n\n ERROR:\n\n\tindex:{index}\n\talpha_map_len:{len(self.alpha_maps)}"
+            )
+            print(f"\n\t{self.alpha_maps[index]}")
+
         if self.transform is not None:
             sample = self.transform(sample)
+            alpha = self.transform(alpha)
 
         if self.target_transform is not None:
             target = self.target_transform(target)
 
-        return sample, target, self.data[index]
+        # alpha = alpha.resize((14, 14))
 
+        return sample, target, self.data[index], alpha
+        # return {"image":sample,"label": target,"data": self.data[index],"alpha": alpha}
 
     def __len__(self):
         return len(self.data)
 
-
     def getMSE(self, d1, d2):
         mse = 0.0
-        for a,b in zip(d1, d2):
-            mse += (a-b)**2
+        for a, b in zip(d1, d2):
+            mse += (a - b) ** 2
         return mse / len(d1)
-
 
     def getRankCorrelationWithMSE(self, predicted, gt=None):
 
@@ -152,15 +177,14 @@ class LaMem2(data.Dataset):
         gt_rank = get_rank(gt)
         predicted_rank = get_rank(predicted)
 
-        #-------------------------------------------------------
+        # -------------------------------------------------------
         ssd = 0
         for i in range(len(predicted_rank)):
-            ssd += (gt_rank[i] -  predicted_rank[i])**2
+            ssd += (gt_rank[i] - predicted_rank[i]) ** 2
 
-        rc = 1-(6*ssd/(n*n*n - n))
+        rc = 1 - (6 * ssd / (n * n * n - n))
 
         # spearmanr() from scipy package produces the same result
         # rc, _ = stats.spearmanr(a=predicted, b=gt, axis=0)
 
         return rc, mse
-

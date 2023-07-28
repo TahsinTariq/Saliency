@@ -426,17 +426,17 @@ class AMNet:
         predictions = []
         targets = []
         start_time = batch_time = time.time()
-        for batch_idx, (data, target, _) in enumerate(train_loader):
+        for batch_idx, (data, target, _, alpha) in enumerate(train_loader):
 
             for val in target:
                 targets.append(val)
 
             if params.use_cuda:
-                data, target = data.cuda(), target.float().cuda()
+                data, target, alpha = data.cuda(), target.float().cuda(), alpha.cuda()
 
-            data, target = Variable(data), Variable(target)
+            data, target, alpha = Variable(data), Variable(target), Variable(alpha)
 
-            output, outputs, alphas = self.model(data)
+            output, outputs, alphas = self.model(data, alpha)
 
             memity, _ = self.postprocess(output, outputs.cpu().data.numpy())
             for val in memity:
@@ -561,8 +561,10 @@ class AMNet:
             rc, mse, test_loss = self.eval_model(test_data_loader)
             if rc > best_val_rc:
                 best_val_rc = rc
-                #self.save_checkpoint(os.path.join(self.get_experiment_path(), "weights_" + str(epoch) + ".pkl"))
-                self.save_checkpoint(os.path.join(self.get_experiment_path(), "weights" + ".pkl"))
+                # self.save_checkpoint(os.path.join(self.get_experiment_path(), "weights_" + str(epoch) + ".pkl"))
+                self.save_checkpoint(
+                    os.path.join(self.get_experiment_path(), "weights" + ".pkl")
+                )
             self.logger.write(
                 train=False,
                 epoch=epoch,
@@ -595,20 +597,24 @@ class AMNet:
         targets = []
         batches = 0
         img_inference_took_avg = 0
-        for data, target, _ in test_loader:
+        for data, target, _, alpha in test_loader:
 
             for val in target:
                 targets.append(val)
 
             target = target.float()
             if self.hps.use_cuda:
-                data, target = data.cuda(), target.cuda()
+                data, target, alpha = data.cuda(), target.cuda(), alpha.cuda()
 
-            data, target = Variable(data, volatile=True), Variable(target)
+            data, target, alpha = (
+                Variable(data, volatile=True),
+                Variable(target),
+                Variable(alpha, volatile=True),
+            )
 
             # print(batches, len(predictions))
             batch_inference_start = time.time()
-            output, outputs, alphas = self.model(data)
+            output, outputs, alphas = self.model(data, alpha)
             batch_inference_took = time.time() - batch_inference_start
 
             img_inference_took = batch_inference_took / data.size(0)

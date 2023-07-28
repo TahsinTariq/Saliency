@@ -115,7 +115,7 @@ def main():
     parser.add_argument(
         "--dataset",
         # default="lamem",
-        default="sun",
+        default="figrim",
         type=str,
         help="Dataset name [lamem, sun]",
     )
@@ -143,17 +143,21 @@ def main():
     parser.add_argument(
         "--train-split",
         # default="",
-        default="train_1",
+        default="train_1_clean",
         type=str,
         help="Train split filename e.g. train_2",
     )
     parser.add_argument(
-        "--val-split", default="", type=str, help="Validation split filename e.g. val_2"
+        "--val-split",
+        # default="",
+        default="test_1_clean.txt",
+        type=str,
+        help="Validation split filename e.g. val_2",
     )
     parser.add_argument(
         "--test-split",
         default="",
-        # default="test_1.txt",
+        # default="test_1_clean.txt",
         type=str,
         help="Test split filename e.g. test_2",
     )
