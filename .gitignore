@@ -12,3 +12,5 @@ model*
 results.txt
 test*
 UI.py
+backups
+*.7z
