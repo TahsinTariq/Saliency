@@ -14,6 +14,12 @@ from torch.autograd import Variable
 import numpy as np
 from torchvision.models.detection import maskrcnn_resnet50_fpn
 
+import detectron2
+from detectron2 import model_zoo
+from detectron2.config import get_cfg
+from detectron2.modeling import build_model
+from detectron2.checkpoint import DetectionCheckpointer
+
 
 class VGG16FC(nn.Module):
     def __init__(self):
@@ -126,6 +132,60 @@ class AMemNetModel(nn.Module):
     def __init__(self, core_cnn, hps, a_res=14, a_vec_size=512):
         super(AMemNetModel, self).__init__()
 
+        # ----------------------------------------
+        cfg = get_cfg()
+        cfg.merge_from_file(
+            model_zoo.get_config_file(
+                "COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x.yaml"
+            )
+        )
+        cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = 0.7  # set threshold for this model
+
+        cfg.MODEL.WEIGHTS = "./model_final_f10217.pkl"
+
+        self.maskrcnn_model = build_model(cfg)
+        DetectionCheckpointer(self.maskrcnn_model).load(cfg.MODEL.WEIGHTS)
+        # self.maskrcnn_model.train(False)
+        # self.maskrcnn_model.eval()
+        self.features_0 = {}
+
+        self.maskrcnn_model.roi_heads.box_head.fc_relu2.register_forward_hook(
+            self.get_features_0("feats")
+        )
+
+        # ----------------------------------------
+        # GEMM IMPLEMENTATION
+        # ----------------------------------------
+        self.softmax = nn.Softmax(
+            dim=2
+        )  # Since current shape is [N, 1, 1000, 1], softmax along dim = 2
+
+        self.gemm_conv1 = nn.Conv2d(
+            in_channels=1, out_channels=1, kernel_size=(1, 1024)
+        )
+        self.gemm_conv2 = nn.Conv2d(1, 1, (1, 1024))
+        # self.gemm_conv3 = nn.Conv2d(4, 1)
+
+        self.gemm_l1 = nn.Linear(1024, 512)
+        self.gemm_l2 = nn.Linear(512, 4)
+        self.gemm_l3 = nn.Linear(4, 1)
+
+        self.gemm_l4 = nn.Linear(1024, 512)
+        self.gemm_l5 = nn.Linear(512, 4)
+        self.gemm_l6 = nn.Linear(4, 1)
+
+        self.gemm_relu_1 = nn.ReLU()
+        self.gemm_relu_2 = nn.ReLU()
+        self.gemm_relu_3 = nn.ReLU()
+        self.gemm_relu_4 = nn.ReLU()
+
+        self.gemm_drop80_1 = nn.Dropout(p=0.8)
+        self.gemm_drop80_2 = nn.Dropout(p=0.8)
+        self.gemm_drop80_3 = nn.Dropout(p=0.8)
+        self.gemm_drop80_4 = nn.Dropout(p=0.8)
+        self.gemm_drop80_5 = nn.Dropout(p=0.8)
+        # ----------------------------------------
+
         self.hps = hps
         self.use_attention = hps.use_attention
         # self.force_distribute_attention = hps.force_distribute_attention
@@ -215,6 +275,9 @@ class AMemNetModel(nn.Module):
         self.drop50 = nn.Dropout(0.5)
         self.drop80 = nn.Dropout(0.80)
 
+        self.model = maskrcnn_resnet50_fpn(pretrained=True)
+        self.mask_fc = nn.Linear(1000, 1)
+
         # self.lgcn_1 = Lift_GCN(1024, 512)
         # self.lgcn_2 = Lift_GCN(512, 256)
         # self.lgcn_3 = Lift_GCN(256, 128)
@@ -243,174 +306,70 @@ class AMemNetModel(nn.Module):
         input_images = x
         batch_size = x.shape[0]
         alpha_map = alpha_x
-
-        # alpha_map = self.core_cnn(alpha_map)
-        alpha_map = self.alpha_conv(alpha_map)
-        alpha_map = alpha_map.view(alpha_map.size(0), 196, 1)
-
-        if not self.use_attention:
-            self.alpha = torch.Tensor(x.size(0), self.a_vec_num)
-            self.alpha = Variable(self.alpha)
-            if self.hps.use_cuda:
-                self.alpha = self.alpha.cuda()
-
-            nn.init.constant(self.alpha, 1)
-            self.alpha = self.alpha / self.a_vec_num
-
-        # x = self.core_cnn(x)
-        x = self.core_cnn(input_images)
-
-        x = self.inconv(x)
-        if self.with_bn:
-            x = self.bn1(x)
-        x = self.relu(x)  # -> [B, D, Ly, Lx] [B, 512, 14, 14]
-        x = self.drop80(x)
-
-        a = x.view(x.size(0), self.a_vec_size, self.a_vec_num)  # [B, D, L]
-
-        # Extract the annotation vector
-        # Mean of each feature map
-        af = a.mean(2)  # [B, D]
-
-        # Hidden states for the LSTM
-        hs = self.hs1(af)  # [D->H]
-        hs = self.tanh(hs)
-
-        cs = self.hc1(af)  # [D->H]
-        cs = self.tanh(cs)
-
-        e = a.transpose(2, 1).contiguous()  # -> [B, L, D]
-        e = e.view(-1, self.a_vec_size)  # a=[B, L, D] -> (-> [B*L, D])
-        e = self.e1(e)  # [B*L, D] -> [B*L, D]
-        e = self.relu(e)
-        e = self.drop50(e)
-        e = e.view(-1, self.a_vec_num, self.a_vec_size)  # -> [B, L, D]
-        e = e.transpose(2, 1)  # -> [B, D, L]
-
-        # Execute the LSTM steps
-        h = hs
-        rnn_state = (
-            hs.expand(self.lstm_layers, hs.size(0), hs.size(1)).contiguous(),
-            cs.expand(self.lstm_layers, cs.size(0), cs.size(1)).contiguous(),
-        )
-
-        rnn_state_alpha = (
-            hs.expand(self.lstm_layers, hs.size(0), hs.size(1)).contiguous(),
-            cs.expand(self.lstm_layers, cs.size(0), cs.size(1)).contiguous(),
-        )
-
-        steps = self.seq_len
-        if steps == 0:
-            steps = 1
-
-        output_seq = [0] * steps
-        alphas = [0] * steps
-
-        output_seq_alpha = [0] * steps
-        alphas_ = [0] * steps
-
-        for i in range(steps):
-
-            if self.use_attention:
-
-                # Dynamic part of the alpha map from the current hidden RNN state
-                if 0:
-                    eh = self.eh12(h)  # -> [H -> D]
-                    eh = eh.view(-1, self.a_vec_size, 1)  # [B, D, 1]
-                    eh = (
-                        e + eh
-                    )  # [B, D, L]  + [B, D, 1]  => adds the eh vec[D] to all positions [L] of the e tensor
-
-                if 1:
-                    eh = self.eh1(h)  # -> [H -> L]
-                    eh = eh.view(-1, 1, self.a_vec_num)  # [B, 1, L]
-                    eh = e + eh  # [B, D, L]  + [B, 1, L]
-
-                eh = self.relu(eh)
-                eh = self.drop50(eh)
-
-                eh = eh.transpose(2, 1).contiguous()  # -> [B, L, D]
-                eh = eh.view(-1, self.a_vec_size)  # -> [B*L, D]
-
-                eh = self.eh3(eh)  # -> [B*L, 512] -> [B*L, 1]
-                eh = eh.view(-1, self.a_vec_num)  # -> [B, L]
-
-                alpha = self.softmax(eh)  # -> [B, L]
-
+        # =====================================================================
+        self.maskrcnn_model.eval()
+        features = []
+        for img_tensor in input_images:
+            inputs = [{"image": img_tensor}]
+            outputs = self.maskrcnn_model(inputs)
+            s0 = self.features_0["feats"].shape[0]
+            if s0 < 1000:
+                features.append(
+                    F.pad(
+                        self.features_0["feats"], (0, 0, 0, 1000 - s0), "constant", 0
+                    )  # reflection padding is not implemented. YET!
+                )
             else:
-                alpha = self.alpha
+                features.append(self.features_0["feats"])
 
-            alpha_a = alpha.view(alpha.size(0), self.a_vec_num, 1)  # -> [B, L, 1]
-            z = a.bmm(
-                alpha_a
-            )  # ->[B, D, 1] scale the location feature vectors by the alpha mask and add them (matrix mul)
-            # [D, L] * [L] = [D]
+        # inputs = [{"image": img_tensor} for img_tensor in input_images]
+        features = torch.cat((features), 0)
+        features = features.view(
+            batch_size, 1, 1000, 1024
+        )  # shape = [N, 1, 1000, 1024]
+        # =====================================================================
+        gemm_f = self.gemm_conv1(features)  # shape = [N, 1, 1000, 1]
+        gemm_f = self.softmax(gemm_f)
+        gemm_f = gemm_f.reshape((batch_size, 1000))  # shape = [N, 1000]
+        f2 = features.reshape((batch_size, 1000, 1024, 1))
+        z_1 = torch.einsum("nhwc,nh->nwc", f2, gemm_f)
 
-            z = z.view(z.size(0), self.a_vec_size)
-            z = z.expand(
-                1, z.size(0), z.size(1)
-            )  # Prepend a new, single dimension representing the sequence
+        z_1 = z_1.view((batch_size, 1024))
+        h_1 = self.gemm_l1(z_1)
+        h_1 = self.gemm_relu_1(h_1)
+        h_1 = self.gemm_drop80_1(h_1)
 
-            z_alpha = a.bmm(alpha_map)
-            z_alpha = z_alpha.view(z_alpha.size(0), self.a_vec_size)
-            z_alpha = z_alpha.expand(1, z_alpha.size(0), z_alpha.size(1))
+        h_1 = self.gemm_l2(h_1)
+        h_1 = self.gemm_relu_2(h_1)
+        h_1 = self.gemm_drop80_2(h_1)
 
-            if self.seq_len == 0:
-                z = z.squeeze(dim=0)
-                h = self.drop50(z)
+        pred_1 = self.gemm_l3(h_1)
 
-                out = self.regnet1(h)
-                out = self.relu(out)
-                out = self.drop50(out)
-                out = self.regnet4(out)
+        alpha_1 = torch.einsum("nhwc,nh->nhwc", f2, gemm_f)
+        alpha_1 = alpha_1.reshape((batch_size, 1, 1000, 1024))
 
-                output_seq[0] = out
-                alphas[0] = alpha.unsqueeze(1)
+        att_2 = self.gemm_conv2(alpha_1)
+        att_2 = self.softmax(att_2)
+        att_2 = att_2.reshape((batch_size, 1000))
+        alpha_1 = alpha_1.reshape((batch_size, 1000, 1024, 1))
+        z_2 = torch.einsum("nhwc,nh->nwc", alpha_1, att_2)
+        z_2 = z_2.view((batch_size, 1024))
 
-                z_alpha = z_alpha.squeeze(dim=0)
-                h_alpha = self.drop50(z_alpha)
+        h_2 = self.gemm_l4(z_2)
+        h_2 = self.gemm_relu_3(h_2)
+        h_2 = self.gemm_drop80_3(h_2)
 
-                out_alpha = self.regnet1(h_alpha)
-                out_alpha = self.relu(out_alpha)
-                out_alpha = self.drop50(out_alpha)
-                out_alpha = self.regnet4(out_alpha)
+        h_2 = self.gemm_l5(h_2)
+        h_2 = self.gemm_relu_4(h_2)
+        h_2 = self.gemm_drop80_4(h_2)
 
-                output_seq_alpha[0] = out_alpha
-                alphas_[0] = alpha_map.unsqueeze(1)
-                break
+        pred_2 = self.gemm_l6(h_1)
 
-            # Run RNN step
-            self.rnn.flatten_parameters()
-            h, rnn_state = self.rnn(z, rnn_state)
-            h = h.squeeze(dim=0)  # remove the seqeunce dimension
-            h = self.drop50(h)
+        pred = torch.mean(torch.cat((pred_1, pred_2), 1), 1, True)
+        # =====================================================================
 
-            out = self.regnet1(h)
-            out = self.relu(out)
-            out = self.drop50(out)
-            out = self.regnet4(out)
-
-            # Run RNN step for alpha
-            self.rnn_2.flatten_parameters()
-            h_alpha, rnn_state_alpha = self.rnn_2(z_alpha, rnn_state_alpha)
-            h_alpha = h_alpha.squeeze(dim=0)  # remove the seqeunce dimension
-            h_alpha = self.drop50(h_alpha)
-
-            out_alpha = self.regnet1_alpha(h_alpha)
-            out_alpha = self.relu(out_alpha)
-            out_alpha = self.drop50(out_alpha)
-            out_alpha = self.regnet4_alpha(out_alpha)
-
-            out = torch.cat((out, out_alpha), 1)
-            out = self.regnet_merge(out)
-
-            # Store the output and the attention mask
-            ind = i
-            output_seq[ind] = out
-            alphas[ind] = alpha.unsqueeze(1)
-
-        output_seq = torch.cat(output_seq, 1)
-        alphas = torch.cat(alphas, 1)
+        output_seq = pred
+        alphas = alpha_map
 
         output = None
         return output, output_seq, alphas
