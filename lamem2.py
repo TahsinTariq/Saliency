@@ -92,7 +92,8 @@ class LaMem2(data.Dataset):
         return
 
     # Loads image from file and returns BGR
-    def img_loader(self, path, RGB=False):
+    def img_loader(self, path, RGB=False, alpha=False):
+        import skimage
 
         if self.image_cache is not None:
             img = self.image_cache.get_image(path)
@@ -103,6 +104,11 @@ class LaMem2(data.Dataset):
         with open(path, "rb") as f:
             with Image.open(f) as img:
                 img_out = img.convert("RGB")
+                if alpha:
+                    o = skimage.exposure.adjust_gamma(
+                        np.array(img_out), gain=1.5, gamma=5
+                    )
+                    img_out = Image.fromarray(o)
                 if self.image_cache is not None:
                     self.image_cache.cache_image(path, img_out)
 
@@ -119,7 +125,7 @@ class LaMem2(data.Dataset):
         target = self.labels[index]
 
         try:
-            alpha = self.img_loader(self.alpha_maps[index])
+            alpha = self.img_loader(self.alpha_maps[index], alpha=True)
         except:
             print(
                 f"\n\n ERROR:\n\n\tindex:{index}\n\talpha_map_len:{len(self.alpha_maps)}"

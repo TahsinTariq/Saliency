@@ -150,7 +150,8 @@ def main():
     parser.add_argument(
         "--val-split",
         # default="",
-        default="test_1_clean.txt",
+        # default="test_1_clean.txt",
+        default="test_0.txt",
         type=str,
         help="Validation split filename e.g. val_2",
     )
